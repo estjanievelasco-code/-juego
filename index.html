@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minijuego VR de Terror - Pasillo Sombrío</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: sans-serif;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            pointer-events: none;
+            font-size: 14px;
+            z-index: 10;
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 6px;
+            height: 6px;
+            margin: -3px 0 0 -3px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.6);
+            pointer-events: none;
+            z-index: 10;
+        }
+    </style>
+
+    <!-- Import Map para cargar Three.js y sus módulos desde CDN -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="info">
+        <b>Experiencia VR de Terror</b><br>
+        Encuentra la llave dorada en el pasillo...<br>
+        <i>Requiere visor compatible con WebXR (Meta Quest, Chrome VR, etc.)</i><br>
+        <span id="desktop-hint">En escritorio: clic para mirar con el ratón, WASD para moverte.</span>
+    </div>
+    <div id="crosshair"></div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { VRButton } from 'three/addons/webxr/VRButton.js';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // --- 1. CONFIGURACIÓN BÁSICA DE LA ESCENA ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.15);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 1.6, 0);
+
+        const playerGroup = new THREE.Group();
+        playerGroup.position.set(0, 0, 8);
+        playerGroup.add(camera);
+        scene.add(playerGroup);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.toneMapping = THREE.ReinhardToneMapping;
+
+        renderer.xr.enabled = true;
+        renderer.xr.setReferenceSpaceType('local-floor');
+        document.body.appendChild(renderer.domElement);
+        document.body.appendChild(VRButton.createButton(renderer));
+
+        // --- 2. ILUMINACIÓN ---
+        const ambientLight = new THREE.AmbientLight(0x050508, 0.2);
+        scene.add(ambientLight);
+
+        const flashlight = new THREE.SpotLight(0xffffff, 4, 15, Math.PI / 6, 0.5, 1);
+        flashlight.castShadow = true;
+        camera.add(flashlight);
+        flashlight.position.set(0, 0, 0);
+        flashlight.target.position.set(0, 0, -1);
+        camera.add(flashlight.target);
+
+        const hallwayLight = new THREE.PointLight(0xff3300, 1, 8);
+        hallwayLight.position.set(0, 2.2, 0);
+        scene.add(hallwayLight);
+
+        // --- 3. CONSTRUCCIÓN DEL PASILLO ---
+        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x111113, roughness: 0.9, metalness: 0.1 });
+        const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.4 });
+
+        const createSurface = (material, w, h, d, x, y, z) => {
+            const geo = new THREE.BoxGeometry(w, h, d);
+            const mesh = new THREE.Mesh(geo, material);
+            mesh.position.set(x, y, z);
+            mesh.receiveShadow = true;
+            scene.add(mesh);
+            return mesh;
+        };
+
+        createSurface(wallMaterial, 0.2, 3, 24, -1.5, 1.5, 0);
+        createSurface(wallMaterial, 0.2, 3, 24, 1.5, 1.5, 0);
+        createSurface(floorMaterial, 3, 0.2, 24, 0, 0, 0);
+        createSurface(wallMaterial, 3, 0.2, 24, 0, 3, 0);
+        createSurface(wallMaterial, 3, 3, 0.2, 0, 1.5, -12);
+
+        const BOUNDS = { minX: -1.3, maxX: 1.3, minZ: -11.3, maxZ: 9.3 };
+
+        // --- 4. ELEMENTOS INTERACTIVOS Y ENEMIGO ---
+        const keyGroup = new THREE.Group();
+        const keyGeo = new THREE.TorusGeometry(0.1, 0.03, 8, 16);
+        const keyMat = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xaa8800, roughness: 0.2 });
+        const keyMesh = new THREE.Mesh(keyGeo, keyMat);
+        keyMesh.castShadow = true;
+        keyGroup.add(keyMesh);
+        keyGroup.position.set(0, 1.2, -8);
+        scene.add(keyGroup);
+
+        const eyesGeo = new THREE.SphereGeometry(0.02, 8, 8);
+        const eyesMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const eye1 = new THREE.Mesh(eyesGeo, eyesMat);
+        const eye2 = new THREE.Mesh(eyesGeo, eyesMat);
+        eye1.position.set(-0.1, 1.6, -11.8);
+        eye2.position.set(0.1, 1.6, -11.8);
+        scene.add(eye1, eye2);
+
+        const monsterGroup = new THREE.Group();
+        const headGeo = new THREE.IcosahedronGeometry(0.4, 1);
+        const monsterMat = new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true });
+        const monsterHead = new THREE.Mesh(headGeo, monsterMat);
+        monsterHead.position.y = 1.6;
+        monsterGroup.add(monsterHead);
+
+        const mEye1 = new THREE.Mesh(eyesGeo, eyesMat);
+        const mEye2 = new THREE.Mesh(eyesGeo, eyesMat);
+        mEye1.position.set(-0.1, 1.65, 0.35);
+        mEye2.position.set(0.1, 1.65, 0.35);
+        monsterGroup.add(mEye1, mEye2);
+
+        monsterGroup.position.set(0, 0, -10);
+        monsterGroup.visible = false;
+        scene.add(monsterGroup);
+
+        // --- 5. MOVIMIENTO DEL JUGADOR ---
+        const pointerControls = new PointerLockControls(camera, renderer.domElement);
+        renderer.domElement.addEventListener('click', () => {
+            if (!renderer.xr.isPresenting) pointerControls.lock();
+        });
+
+        const keysPressed = {};
+        window.addEventListener('keydown', (e) => { keysPressed[e.code] = true; });
+        window.addEventListener('keyup', (e) => { keysPressed[e.code] = false; });
+
+        const desktopMoveSpeed = 2.5;
+        const forwardVec = new THREE.Vector3();
+        const rightVec = new THREE.Vector3();
+
+        function updateDesktopMovement(delta) {
+            if (!pointerControls.isLocked) return;
+
+            camera.getWorldDirection(forwardVec);
+            forwardVec.y = 0;
+            forwardVec.normalize();
+            rightVec.crossVectors(forwardVec, camera.up).normalize();
+
+            const move = new THREE.Vector3();
+            if (keysPressed['KeyW'] || keysPressed['ArrowUp']) move.add(forwardVec);
+            if (keysPressed['KeyS'] || keysPressed['ArrowDown']) move.sub(forwardVec);
+            if (keysPressed['KeyD'] || keysPressed['ArrowRight']) move.add(rightVec);
+            if (keysPressed['KeyA'] || keysPressed['ArrowLeft']) move.sub(rightVec);
+
+            if (move.lengthSq() > 0) {
+                move.normalize().multiplyScalar(desktopMoveSpeed * delta);
+                camera.position.x += move.x;
+                camera.position.z += move.z;
+            }
+        }
+
+        const tempQuat = new THREE.Quaternion();
+        const tempEuler = new THREE.Euler();
+        const vrMoveSpeed = 2.0;
+
+        function updateVRMovement(delta) {
+            const session = renderer.xr.getSession();
+            if (!session) return;
+
+            for (const source of session.inputSources) {
+                if (!source.gamepad || !source.gamepad.axes) continue;
+                const axes = source.gamepad.axes;
+                const x = axes.length >= 4 ? axes[2] : axes[0];
+                const y = axes.length >= 4 ? axes[3] : axes[1];
+                if (Math.abs(x) < 0.15 && Math.abs(y) < 0.15) continue;
+
+                camera.getWorldQuaternion(tempQuat);
+                tempEuler.setFromQuaternion(tempQuat, 'YXZ');
+                const yaw = tempEuler.y;
+
+                const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+                const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+
+                const move = new THREE.Vector3();
+                move.addScaledVector(forward, -y);
+                move.addScaledVector(right, x);
+
+                if (move.lengthSq() > 1) move.normalize();
+                move.multiplyScalar(vrMoveSpeed * delta);
+
+                playerGroup.position.x += move.x;
+                playerGroup.position.z += move.z;
+            }
+        }
+
+        function clampToBounds() {
+            const worldX = playerGroup.position.x + camera.position.x;
+            const worldZ = playerGroup.position.z + camera.position.z;
+            const clampedX = THREE.MathUtils.clamp(worldX, BOUNDS.minX, BOUNDS.maxX);
+            const clampedZ = THREE.MathUtils.clamp(worldZ, BOUNDS.minZ, BOUNDS.maxZ);
+
+            if (renderer.xr.isPresenting) {
+                playerGroup.position.x += clampedX - worldX;
+                playerGroup.position.z += clampedZ - worldZ;
+            } else {
+                camera.position.x += clampedX - worldX;
+                camera.position.z += clampedZ - worldZ;
+            }
+        }
+
+        // --- 6. LÓGICA DEL JUEGO Y EVENTOS ---
+        const raycaster = new THREE.Raycaster();
+        const cameraWorldPos = new THREE.Vector3();
+        const cameraWorldDir = new THREE.Vector3();
+        let keyGazeTimer = 0;
+        let triggeredJumpscare = false;
+        let clock = new THREE.Clock();
+
+        function triggerJumpscare() {
+            triggeredJumpscare = true;
+            keyGroup.visible = false;
+
+            camera.getWorldPosition(cameraWorldPos);
+            camera.getWorldDirection(cameraWorldDir);
+            monsterGroup.position.copy(cameraWorldPos).addScaledVector(cameraWorldDir, 0.8);
+            monsterGroup.position.y = 0;
+            monsterGroup.visible = true;
+
+            hallwayLight.color.setHex(0xff0000);
+            hallwayLight.intensity = 10;
+            flashlight.intensity = 0;
+
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(100, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.5);
+            gain.gain.setValueAtTime(1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.8);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.8);
+        }
+
+        // --- 7. BUCLE PRINCIPAL ---
+        renderer.setAnimationLoop(() => {
+            const delta = Math.min(clock.getDelta(), 0.1);
+            const time = clock.getElapsedTime();
+
+            if (keyGroup.visible) {
+                keyGroup.rotation.y += 1 * delta;
+                keyGroup.position.y = 1.2 + Math.sin(time * 2) * 0.1;
+            }
+
+            if (!triggeredJumpscare) {
+                if (Math.random() > 0.93) {
+                    hallwayLight.intensity = Math.random() * 2;
+                }
+            }
+
+            if (!triggeredJumpscare) {
+                updateDesktopMovement(delta);
+                updateVRMovement(delta);
+                clampToBounds();
+
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+                const intersects = raycaster.intersectObject(keyMesh);
+
+                camera.getWorldPosition(cameraWorldPos);
+                const distanceToKey = cameraWorldPos.distanceTo(keyGroup.position);
+
+                if (intersects.length > 0 || distanceToKey < 2.0) {
+                    keyGazeTimer += delta;
+                    keyMat.emissive.setHex(0xff0000);
+
+                    if (keyGazeTimer > 1.5 || distanceToKey < 1.5) {
+                        triggerJumpscare();
+                    }
+                } else {
+                    keyGazeTimer = 0;
+                    keyMat.emissive.setHex(0xaa8800);
+                }
+            } else {
+                camera.getWorldPosition(cameraWorldPos);
+                monsterGroup.position.x = cameraWorldPos.x + (Math.random() - 0.5) * 0.05;
+                monsterGroup.position.y = (Math.random() - 0.5) * 0.05;
+            }
+
+            renderer.render(scene, camera);
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
